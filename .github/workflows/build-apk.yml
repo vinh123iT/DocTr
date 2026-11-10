@@ -2,14 +2,28 @@ name: Build APK
 
 on:
   workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: "Phiên bản Flutter (ví dụ 3.35.x; gõ 3.x để dùng bản mới nhất)"
+        required: false
+        default: "3.35.x"
   push:
     branches: [main, master]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - name: Tìm thư mục dự án
+        run: |
+          PUB=$(find . -name pubspec.yaml -not -path './.*' | head -n 1)
+          if [ -z "$PUB" ]; then echo "Không tìm thấy pubspec.yaml"; exit 1; fi
+          DIR=$(dirname "$PUB")
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+          echo "Dự án nằm ở: $DIR"
 
       - uses: actions/setup-java@v4
         with:
@@ -19,21 +33,90 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ inputs.flutter_version || '3.35.x' }}
           cache: true
 
       - name: Tạo khung Android
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           flutter create . --org com.vinh --project-name lumi_reader --platforms android
-          rm -rf test
+          rm -f test/widget_test.dart
           python3 tools/patch_android.py .
 
-      - run: flutter pub get
+      - name: Tải trước Gradle (có thử lại)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          PROPS=android/gradle/wrapper/gradle-wrapper.properties
+          URL=$(grep '^distributionUrl=' "$PROPS" | cut -d= -f2- | sed 's#\\##g')
+          FILE=$(basename "$URL")
+          VER=$(echo "$FILE" | sed -E 's/^gradle-(.*)-(all|bin)\.zip$/\1/')
+          echo "Gradle cần: $FILE (từ $URL)"
+          DEST="$HOME/gradle-dist/$FILE"
+          mkdir -p "$HOME/gradle-dist"
+          ok=0
+          for attempt in 1 2 3 4 5 6; do
+            for src in "$URL" "https://downloads.gradle.org/distributions/$FILE" "https://github.com/gradle/gradle-distributions/releases/download/v$VER/$FILE"; do
+              echo "Lần $attempt, thử: $src"
+              if curl -fsSL --connect-timeout 30 --max-time 900 -o "$DEST" "$src" && unzip -tq "$DEST" > /dev/null 2>&1; then
+                ok=1
+                break 2
+              fi
+              rm -f "$DEST"
+            done
+            sleep $((attempt * 15))
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::warning::Không tải trước được Gradle, để wrapper tự tải."
+            exit 0
+          fi
+          sed -i "s#^distributionUrl=.*#distributionUrl=file\\\\://$HOME/gradle-dist/$FILE#" "$PROPS"
+          grep '^distributionUrl=' "$PROPS"
 
-      - name: Build APK
-        run: flutter build apk --release --split-per-abi
+      - name: Dùng khóa ký cố định
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          mkdir -p "$HOME/.android"
+          cp tools/debug.keystore "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | grep -i "SHA"
+
+      - name: flutter pub get
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
+
+      - name: Phân tích mã (flutter analyze)
+        continue-on-error: true
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter analyze --no-fatal-infos --no-fatal-warnings 2>&1 | tee analyze.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Chạy kiểm thử (flutter test)
+        continue-on-error: true
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter test 2>&1 | tee test.txt; exit "${PIPESTATUS[0]}"
+
+      - name: Build APK (thử lại tối đa 3 lần)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          for i in 1 2 3; do
+            if flutter build apk --release --split-per-abi; then
+              exit 0
+            fi
+            echo "Build lỗi lần $i, chờ 60 giây rồi thử lại..."
+            sleep 60
+          done
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: lumi-reader-apk
-          path: build/app/outputs/flutter-apk/*.apk
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
 
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bao-cao-kiem-tra
+          path: |
+            ${{ env.PROJECT_DIR }}/analyze.txt
+            ${{ env.PROJECT_DIR }}/test.txt
+          if-no-files-found: ignore
