@@ -1,0 +1,50 @@
+name: lumi_reader
+description: Ứng dụng đọc và nghe truyện EPUB/TXT ngoại tuyến, mở sẵn mọi tính năng.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Lưu trữ & tệp
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  file_picker: ^8.1.2
+  share_plus: ^10.0.2
+
+  # Đọc EPUB (tự phân tích bằng archive + xml + html)
+  archive: ^3.6.1
+  xml: ^6.5.0
+  html: ^0.15.4
+
+  # Giọng đọc
+  flutter_tts: ^4.0.2
+  sherpa_onnx: ^1.12.0
+  just_audio: ^0.9.40
+  just_audio_background: ^0.0.1-beta.13
+  audio_session: ^0.1.21
+  audioplayers: ^6.1.0
+
+  # Tải giọng AI và sao lưu Google Drive
+  http: ^1.2.2
+  google_sign_in: ^6.2.1
+  googleapis: ^13.2.0
+  extension_google_sign_in_as_googleapis_auth: ^2.0.12
+
+  # Giao diện
+  google_fonts: ^6.2.1
+  scrollable_positioned_list: ^0.3.8
+  wakelock_plus: ^1.2.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
